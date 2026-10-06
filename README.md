@@ -2,7 +2,7 @@
 
 An HTTP service that accepts tasks, spreads them across two priority queues, and processes them with a pool of workers behind a rate limiter. Results are cached in memory. It shuts down without dropping work that has already been accepted.
 
-I wrote it to get hands-on with Go concurrency: channels, `select`, mutexes, atomics, `context` cancellation and shutdown ordering. It is a learning project, not a production service — see [What's missing](#whats-missing).
+I wrote it to get hands-on with Go concurrency: channels, `select`, mutexes, atomics, `context` cancellation and shutdown ordering. 
 
 Only two non-stdlib dependencies: `gorilla/mux` for routing and `google/uuid` for IDs. The rate limiter and the worker pool are hand-written.
 
