@@ -2,54 +2,74 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
+	"os"
+	"os/signal"
 	"syscall"
 
-	"os/signal"
 	"task_runner/internal/api"
 	config "task_runner/internal/cfg"
 	"task_runner/internal/domain"
-	"time"
 )
 
-func main(){
-	cfg := config.LoadConfig()
-	
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	syg, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	sample := domain.ServiceSample{
-		Capacity: cfg.Capacity,
-		TikerTime: cfg.TikerTime,
-		Chan_cap: cfg.Chan_cap,
-		Sem_cap: cfg.Sem_cap,
-		N_workers: cfg.NWorkers,
-		Timeout: 	cfg.Timeout,
-	}
-	serv := domain.NewService(syg, sample)
-	
-	serv.Run(syg)
-	handler := api.NewHandler(serv, 5*time.Second)
-	r := api.Router(handler)
-	server, errCh := api.StartServer(r)
-	select {
-	case err:=<-errCh:
-		log.Printf("error with starting server, %s", err.Error())
-	case <-syg.Done():
-		log.Printf("shutting down gracefully by signal")
-	}
-	
-	shutdown_ctx, shut_cancel := context.WithTimeout(context.Background(), 10 * time.Second)
-	defer shut_cancel()
+func main() {
+	cfg := config.MustLoad()
 
-	if err := server.Shutdown(shutdown_ctx); err != nil {
-		log.Printf("http shutdown, err: %s", err.Error())
+	level := slog.LevelInfo
+	if cfg.Env == "dev" {
+		level = slog.LevelDebug
 	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
+
+	appCtx, appCancel := context.WithCancel(context.Background())
+	defer appCancel()
+
+	sigCtx, stop := signal.NotifyContext(appCtx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	serv := domain.NewService(sigCtx, domain.ServiceSample{
+		Capacity:    cfg.Capacity,
+		TickerTime:  cfg.TickerTime,
+		ChanCap:     cfg.ChanCap,
+		SemCap:      cfg.SemCap,
+		NWorkers:    cfg.NWorkers,
+		TokenWait:   cfg.TokenWait,
+		TaskTimeout: cfg.TaskTimeout,
+		SimulateFor: cfg.SimulateFor,
+		Overflow:    cfg.Overflow,
+		Mode:        cfg.Mode,
+		Store:       cfg.Store,
+	})
+	serv.Run(sigCtx)
+
+	handler := api.NewHandler(serv, cfg.EnqueueTimeout)
+	server, errCh := api.StartServer(cfg.Port, api.Router(handler))
+	slog.Info("server listening", "port", cfg.Port, "env", cfg.Env)
+
+	select {
+	case err := <-errCh:
+		slog.Error("server failed to start", "err", err)
+	case <-sigCtx.Done():
+		slog.Info("signal received, shutting down")
+	}
+
+	// Order matters: HTTP first, then the queues, then the workers.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.ShutdownHTTP)
+	defer shutdownCancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		slog.Error("http shutdown", "err", err)
+	}
+
 	serv.CloseChannels()
 
-	if err := serv.WaitTimeout(15 * time.Second); err != nil {
-		log.Printf("forcefully shutting down")
+	if err := serv.WaitTimeout(cfg.ShutdownWorkers); err != nil {
+		slog.Error("workers did not finish in time, forcing", "err", err)
 	}
-	cancel()
+
+	appCancel()
+
+	m := serv.Metrics()
+	slog.Info("stopped", "processed", m.Processed, "failed", m.Failed,
+		"cancelled", m.Cancelled, "avg_ms", m.AverageProcessTime)
 }

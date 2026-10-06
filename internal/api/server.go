@@ -1,55 +1,49 @@
 package api
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
+	"time"
+
 	"task_runner/internal/domain"
 
-	"time"
-	"log"
 	"github.com/gorilla/mux"
 )
 
 type Handler struct {
-	serv *domain.Service
+	serv         *domain.Service
 	timeoutQueue time.Duration
 }
 
-func NewHandler(serv *domain.Service, t time.Duration) *Handler {
-	 return &Handler{serv: serv, timeoutQueue: t}
+func NewHandler(serv *domain.Service, enqueueTimeout time.Duration) *Handler {
+	return &Handler{serv: serv, timeoutQueue: enqueueTimeout}
 }
 
-func StartServer(r *mux.Router) (*http.Server, <-chan error) {
+// StartServer runs the server in a goroutine. The returned channel delivers a
+// fatal startup error, so main does not wait for a signal on a dead server.
+func StartServer(port int, r *mux.Router) (*http.Server, <-chan error) {
 	server := &http.Server{
-		Addr: ":8080",
-		Handler: r,
-
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
+
 	errCh := make(chan error, 1)
 	go func() {
-        if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-            log.Printf("Server failed: %v", err)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
-        }
-    }()
+		}
+	}()
 
 	return server, errCh
 }
-func Router(s *Handler) *mux.Router  {
-    m := mux.NewRouter()
 
-	m.HandleFunc("/tasks", s.CreateTaskHandler).Methods("POST")
-	m.HandleFunc("/tasks/{id}", s.GetTaskFromCache).Methods("GET")
-	m.HandleFunc("/metrics", s.GetMetrics).Methods("GET")
-	m.HandleFunc("/_info", s.HealthCheck).Methods("GET")
+func Router(h *Handler) *mux.Router {
+	m := mux.NewRouter()
+	m.HandleFunc("/tasks", h.CreateTaskHandler).Methods(http.MethodPost)
+	m.HandleFunc("/tasks/{id}", h.GetTaskFromCache).Methods(http.MethodGet)
+	m.HandleFunc("/metrics", h.GetMetrics).Methods(http.MethodGet)
+	m.HandleFunc("/_info", h.HealthCheck).Methods(http.MethodGet)
 	return m
-}
-
-
-
-// @Summary      Health check
-// @Tags         System
-// @Success      200
-// @Router       /_info [get]
-func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
 }

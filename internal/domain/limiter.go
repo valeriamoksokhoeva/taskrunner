@@ -6,16 +6,15 @@ import (
 	"time"
 )
 
-
-
-func NewTokenBucket(ctx context.Context, capacity int,  tikerTime time.Duration) *TokenBucket {
-
+// NewTokenBucket returns a bucket that starts full, so the initial burst is
+// available right away, and is topped up one token per refill period.
+func NewTokenBucket(ctx context.Context, capacity int, refill time.Duration) *TokenBucket {
 	tb := &TokenBucket{
-		tokens: make(chan struct{}, capacity), 
-		ticker: time.NewTicker(tikerTime),
+		tokens: make(chan struct{}, capacity),
+		ticker: time.NewTicker(refill),
 	}
-	
-	for range capacity{
+
+	for range capacity {
 		tb.tokens <- struct{}{}
 	}
 
@@ -37,9 +36,11 @@ func NewTokenBucket(ctx context.Context, capacity int,  tikerTime time.Duration)
 	return tb
 }
 
-func (s *TokenBucket) Allow(ctx context.Context,timeout time.Duration) error {
+// Allow takes a token. It returns ErrRateLimited on timeout and
+// ErrCtxCancelled on cancellation; callers treat those differently.
+func (tb *TokenBucket) Allow(ctx context.Context, timeout time.Duration) error {
 	select {
-	case <-s.tokens:
+	case <-tb.tokens:
 		return nil
 	default:
 	}
@@ -48,7 +49,7 @@ func (s *TokenBucket) Allow(ctx context.Context,timeout time.Duration) error {
 	defer timer.Stop()
 
 	select {
-	case <-s.tokens:
+	case <-tb.tokens:
 		return nil
 	case <-timer.C:
 		return custom_errors.ErrRateLimited

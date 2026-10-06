@@ -1,26 +1,28 @@
 package domain
 
+import "time"
 
-func NewMetrics() *Metrics {
-	return &Metrics{}
-}
+func NewMetrics() *Metrics { return &Metrics{} }
 
-func (s *Metrics) IncProcessed() {
-	s.processed.Add(1)
-}
+func (m *Metrics) IncProcessed() { m.processed.Add(1) }
+func (m *Metrics) IncFailed()    { m.failed.Add(1) }
+func (m *Metrics) IncCancelled() { m.cancelled.Add(1) }
+func (m *Metrics) IncWorkers()   { m.workers.Add(1) }
+func (m *Metrics) DecWorkers()   { m.workers.Add(-1) }
 
-func (s *Metrics) IncFailed() {
-	s.failed.Add(1)
-}
+func (m *Metrics) AddDuration(d time.Duration) { m.totalNanos.Add(int64(d)) }
 
-func (s *Metrics) Snapshot() (int64, int64, int64){
-	return s.processed.Load(), s.failed.Load(), s.workers.Load()
-}
-
-func (s *Metrics) IncWorkers() {
-	s.workers.Add(1)
-}
-
-func (s *Metrics) DecWorkers() {
-	s.workers.Add(-1)
+func (m *Metrics) Snapshot() MetricsRes {
+	processed := m.processed.Load()
+	var avgMs int64
+	if processed > 0 {
+		avgMs = (m.totalNanos.Load() / processed) / int64(time.Millisecond)
+	}
+	return MetricsRes{
+		Processed:          processed,
+		Failed:             m.failed.Load(),
+		Cancelled:          m.cancelled.Load(),
+		ActiveWorkers:      m.workers.Load(),
+		AverageProcessTime: avgMs,
+	}
 }

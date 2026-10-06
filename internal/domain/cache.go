@@ -2,16 +2,21 @@ package domain
 
 import "sync"
 
+func NewStorage(kind string) Storage {
+	if kind == "syncmap" {
+		return NewStoreSync()
+	}
+	return NewStore()
+}
 
 func NewStore() *Store {
 	return &Store{items: make(map[string]TaskResult)}
 }
 
-func (s *Store) Set(key string, value TaskResult){
+func (s *Store) Set(key string, value TaskResult) {
 	s.rwm.Lock()
 	defer s.rwm.Unlock()
 	s.items[key] = value
-	
 }
 
 func (s *Store) Get(key string) (TaskResult, bool) {
@@ -25,7 +30,6 @@ func (s *Store) Delete(key string) {
 	s.rwm.Lock()
 	defer s.rwm.Unlock()
 	delete(s.items, key)
-	
 }
 
 func NewStoreSync() *StoreSync {
@@ -37,11 +41,12 @@ func (s *StoreSync) Set(key string, value TaskResult) {
 }
 
 func (s *StoreSync) Get(key string) (TaskResult, bool) {
-	res, ok := s.m.Load(key)
+	v, ok := s.m.Load(key)
 	if !ok {
-		return TaskResult{}, ok
+		return TaskResult{}, false
 	}
-	return res.(TaskResult), ok
+	res, ok := v.(TaskResult)
+	return res, ok
 }
 
 func (s *StoreSync) Delete(key string) {
